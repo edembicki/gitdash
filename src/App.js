@@ -19,7 +19,8 @@ const REPO_MAP = {
   'evolucao-otimizacao-sistemas': 'Evolução e Otimização de Sistemas',
   'uniasselvi-api-diploma': 'Projeto Diploma',
   'uniasselvi-api-aulas-teams': 'Projeto Aulas Teams',
-  'admissao-service': 'Projeto Admissão' 
+  'admissao-service': 'Projeto Admissão' ,
+  'uniasselvi-api-egresso': 'Projeto Egresso'
 };
 
 // --- UTILITÁRIO DE FORMATAÇÃO ---
