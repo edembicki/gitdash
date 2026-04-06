@@ -37,12 +37,22 @@ const parseGitData = (commits, ignoredUrls = [], repoMap = {}) => {
     const gmudMatch = c.message.match(/\[GMUD-(\d+)\]/i);
     const gmudId = gmudMatch ? gmudMatch[1] : null;
 
+    // Limpa o prefixo de minutos [108]
     let cleanMessage = c.message.replace(/^\[\d+\]\s*-?\s*/, '');
     
-    // Agora usa o mapeamento dinâmico baseado nos repos selecionados
     const friendlyRepo = repoMap[c.repo] || c.repo;
-    if (!cleanMessage.toLowerCase().includes(friendlyRepo.toLowerCase())) {
-        cleanMessage = `${friendlyRepo} – ${cleanMessage}`;
+
+    // AJUSTE SOLICITADO: Formatação específica para Evolução e Otimização
+    if (friendlyRepo.toLowerCase() === 'evolucao-otimizacao-sistemas') {
+        const repoNameFixed = "Evolução e Otimização de sistemas";
+        if (!cleanMessage.includes(repoNameFixed)) {
+            cleanMessage = `${repoNameFixed} - ${cleanMessage}`;
+        }
+    } else {
+        // Lógica padrão para outros repositórios
+        if (!cleanMessage.toLowerCase().includes(friendlyRepo.toLowerCase())) {
+            cleanMessage = `${friendlyRepo} – ${cleanMessage}`;
+        }
     }
 
     if (minutes > 0 || gmudId) {
