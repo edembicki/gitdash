@@ -15,14 +15,6 @@ const { RangePicker } = DatePicker;
 // --- CONFIGURAÇÃO DE AMBIENTE ---
 const ORG_NAME = 'GrupoUniasselvi'; 
 
-const REPO_MAP = {
-  'evolucao-otimizacao-sistemas': 'Evolução e Otimização de Sistemas',
-  'uniasselvi-api-diploma': 'Projeto Diploma',
-  'uniasselvi-api-aulas-teams': 'Projeto Aulas Teams',
-  'admissao-service': 'Projeto Admissão' ,
-  'uniasselvi-api-egresso': 'Projeto Egresso'
-};
-
 // --- UTILITÁRIO DE FORMATAÇÃO ---
 const formatToClock = (minutes) => {
   const h = Math.floor(minutes / 60);
@@ -31,7 +23,7 @@ const formatToClock = (minutes) => {
 };
 
 // --- ATUALIZAÇÃO DA FUNÇÃO DE PARSE ---
-const parseGitData = (commits, ignoredUrls = []) => {
+const parseGitData = (commits, ignoredUrls = [], repoMap = {}) => {
   const dailyReport = {};
   const allDeploys = [];
   let totalMinutesMonth = 0;
@@ -47,7 +39,8 @@ const parseGitData = (commits, ignoredUrls = []) => {
 
     let cleanMessage = c.message.replace(/^\[\d+\]\s*-?\s*/, '');
     
-    const friendlyRepo = REPO_MAP[c.repo] || c.repo;
+    // Agora usa o mapeamento dinâmico baseado nos repos selecionados
+    const friendlyRepo = repoMap[c.repo] || c.repo;
     if (!cleanMessage.toLowerCase().includes(friendlyRepo.toLowerCase())) {
         cleanMessage = `${friendlyRepo} – ${cleanMessage}`;
     }
@@ -124,7 +117,17 @@ const DashboardContent = ({ user, token, onLogout }) => {
     return commits.filter(c => c.date >= start && c.date <= end);
   }, [commits, dateRange]);
 
-  const data = useMemo(() => parseGitData(filteredCommits, ignoredCommitUrls), [filteredCommits, ignoredCommitUrls]); 
+  // --- MAPEAMENTO DINÂMICO DE REPOS ---
+  const dynamicRepoMap = useMemo(() => {
+    const map = {};
+    repos.forEach(r => { map[r.name] = r.name; });
+    return map;
+  }, [repos]);
+
+  const data = useMemo(() => 
+    parseGitData(filteredCommits, ignoredCommitUrls, dynamicRepoMap), 
+    [filteredCommits, ignoredCommitUrls, dynamicRepoMap]
+  ); 
 
   // --- FUNÇÃO GERAR PDF ---
   const generatePDF = () => {
@@ -184,14 +187,21 @@ const DashboardContent = ({ user, token, onLogout }) => {
       let page = 1;
       let results = [];
       let hasMore = true;
+
+      // Adiciona type=all para buscar repos privados da Org
+      const separator = url.includes('?') ? '&' : '?';
+      const finalBaseUrl = url.includes('/orgs/') ? `${url}${separator}type=all` : url;
+
       while (hasMore) {
-        const res = await fetch(`${url}?per_page=100&page=${page}&sort=updated`, {
+        const pageSeparator = finalBaseUrl.includes('?') ? '&' : '?';
+        const res = await fetch(`${finalBaseUrl}${pageSeparator}per_page=100&page=${page}&sort=updated`, {
           headers: { Authorization: `token ${token}` }
         });
         const data = await res.json();
-        if (data && data.length > 0) {
+        if (data && Array.isArray(data) && data.length > 0) {
           results = [...results, ...data.map(r => ({ name: r.name, owner: r.owner.login, id: r.id }))];
-          page++;
+          if (data.length < 100) hasMore = false;
+          else page++;
         } else { hasMore = false; }
       }
       return results;
@@ -200,9 +210,12 @@ const DashboardContent = ({ user, token, onLogout }) => {
     try {
       const [orgResults, userResults] = await Promise.all([
         fetchFromUrl(`https://api.github.com/orgs/${ORG_NAME}/repos`),
-        fetchFromUrl(`https://api.github.com/user/repos`)
+        fetchFromUrl(`https://api.github.com/user/repos?affiliation=owner,collaborator,organization_member`)
       ]);
-      const unique = Array.from(new Map([...orgResults, ...userResults].map(item => [item.id, item])).values());
+      const combined = [...orgResults, ...userResults];
+      const unique = Array.from(new Map(combined.map(item => [item.id, item])).values())
+        .sort((a, b) => a.name.localeCompare(b.name));
+        
       setRepos(unique);
       setSelectedRepos(unique);
     } catch (err) {
@@ -214,32 +227,56 @@ const DashboardContent = ({ user, token, onLogout }) => {
 
   const syncCommits = useCallback(async () => {
     if (selectedRepos.length === 0 || syncingRef.current) return;
-    
     syncingRef.current = true;
     setSyncing(true);
-    const allFetchedCommits = [];
 
     try {
+      // 1. Pega os eventos para descobrir as branches ativas
+      const eventsRes = await fetch(`https://api.github.com/users/${user.login}/events?per_page=50`, {
+        headers: { Authorization: `token ${token}` }
+      });
+      const events = await eventsRes.json();
+
+      // Mapa para guardar qual a última branch que você mexeu em cada repo
+      const repoBranches = {};
+      events.forEach(e => {
+        if (e.type === 'PushEvent' && !repoBranches[e.repo.name]) {
+          repoBranches[e.repo.name] = e.payload.ref.replace('refs/heads/', '');
+        }
+      });
+
+      const allFetchedCommits = [];
+
+      // 2. Busca os commits nos repos selecionados usando a branch correta
       const promises = selectedRepos.map(async (repo) => {
+        const fullName = `${repo.owner}/${repo.name}`;
+        const branch = repoBranches[fullName] || 'master'; // Fallback para master/main se não achar evento
+        
         const res = await fetch(
-          `https://api.github.com/repos/${repo.owner}/${repo.name}/commits?author=${user.login}&since=2026-01-01&per_page=100`,
+          `https://api.github.com/repos/${fullName}/commits?author=${user.login}&sha=${branch}&since=2026-01-01`,
           { headers: { Authorization: `token ${token}` } }
         );
+
         if (!res.ok) return [];
         const data = await res.json();
-        return data.map(c => ({
+        return Array.isArray(data) ? data.map(c => ({
           repo: repo.name,
           message: c.commit.message,
           date: new Date(c.commit.author.date).toLocaleDateString('en-CA'),
-          url: c.html_url 
-        }));
+          url: c.html_url
+        })) : [];
       });
 
       const results = await Promise.all(promises);
       results.forEach(list => allFetchedCommits.push(...list));
-      setCommits(allFetchedCommits);
-      message.success("Dados sincronizados!");
+
+      const uniqueCommits = Array.from(new Map(allFetchedCommits.map(c => [c.url, c])).values())
+        .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+      setCommits(uniqueCommits);
+      message.success("Sincronizado com sucesso!");
     } catch (err) {
+      console.error(err);
       message.error("Erro na sincronização.");
     } finally {
       setSyncing(false);
@@ -300,7 +337,6 @@ const DashboardContent = ({ user, token, onLogout }) => {
               </Row>
 
               <Row gutter={[16, 16]}>
-                {/* COLUNA 1: PROJETOS GRUPO UNIASSELVI */}
                 <Col xs={24} md={12}>
                   <div style={{ background: '#1e293b', padding: '16px', borderRadius: '8px', height: '100%' }}>
                     <Text strong style={{ color: '#3b82f6' }}><FolderGit2 size={14} /> Projetos Uniasselvi / Vitru</Text>
@@ -314,26 +350,20 @@ const DashboardContent = ({ user, token, onLogout }) => {
                       <li>Padrão: <b style={{ color: '#ffa940' }}>[minutos] descrição</b></li>
                       <li>Indispensável para o rastreio de horas por sprint.</li>
                     </ul>
-                    <br></br>
-                    <br></br>
-                    <br></br>
                   </div>
                 </Col>
 
-                {/* COLUNA 2: EVOLUÇÃO E OTIMIZAÇÃO */}
                 <Col xs={24} md={12}>
                   <div style={{ background: '#1e293b', padding: '16px', borderRadius: '8px', height: '100%' }}>
                     <Text strong style={{ color: '#ffa940' }}><Settings size={14} /> Evolução e Otimização de sistemas</Text>
                     <p style={{ color: '#94a3b8', fontSize: '12px', margin: '8px 0' }}>Use para: Demandas gerais de manutenção e suporte.</p>
                     
-                    {/* Suporte Geral */}
                     <div style={{ background: '#0b1120', padding: '10px', borderRadius: '6px', border: '1px solid #334155', marginBottom: '8px' }}>
                       <code style={{ color: '#52c41a', fontSize: '11px' }}>
                         git commit --allow-empty -m "[{dailyTargetMinutes}] Evolução e Otimização - Suporte Geral" --date="{dayjs().format('YYYY-MM-DD')}T09:00:00"
                       </code>
                     </div>
 
-                    {/* Registro de GMUD */}
                     <div style={{ background: '#0b1120', padding: '10px', borderRadius: '6px', border: '1px solid #334155' }}>
                       <code style={{ color: '#ffa940', fontSize: '11px' }}>
                         git commit --allow-empty -m "[{dailyTargetMinutes}] [GMUD-9999] Evolução e Otimização - Descrição do Deploy" --date="{dayjs().format('YYYY-MM-DD')}T09:00:00"
@@ -366,7 +396,7 @@ const DashboardContent = ({ user, token, onLogout }) => {
           </Col>
 
           <Col span={24}>
-            <Card title={<Space style={{color: '#fff'}}><FolderGit2 size={18} color="#ffa940" /> Projetos Selecionados ({repos.length})</Space>} style={cardStyle}>
+            <Card title={<Space style={{color: '#fff'}}><FolderGit2 size={18} color="#ffa940" /> Projetos Disponíveis ({repos.length})</Space>} style={cardStyle}>
               {loadingRepos ? <div style={{ textAlign: 'center' }}><Spin /></div> : (
                 <div style={{ maxHeight: '180px', overflowY: 'auto', padding: '15px', background: '#0b1120', borderRadius: '8px' }}>
                     <Row gutter={[8, 8]}>
@@ -375,8 +405,8 @@ const DashboardContent = ({ user, token, onLogout }) => {
                         <Checkbox checked={selectedRepos.some(r => r.id === repo.id)} onChange={(e) => {
                             const next = e.target.checked ? [...selectedRepos, repo] : selectedRepos.filter(r => r.id !== repo.id);
                             setSelectedRepos(next);
-                          }} style={{ color: repo.name === 'evolucao-otimizacao-sistemas' ? '#ffa940' : '#cbd5e1', fontSize: '11px' }}>
-                          {REPO_MAP[repo.name] || repo.name}
+                          }} style={{ color: '#cbd5e1', fontSize: '11px' }}>
+                          {repo.name}
                         </Checkbox>
                       </Col>
                     ))}
