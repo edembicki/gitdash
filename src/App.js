@@ -28,7 +28,14 @@ const parseGitData = (commits, ignoredUrls = [], repoMap = {}) => {
   const allDeploys = [];
   let totalMinutesMonth = 0;
 
-  commits.forEach(c => {
+  // Criamos um mapa para rastrear mensagens únicas por dia
+  const seenMessagesPerDay = {};
+
+  // Ordenamos do mais recente para o mais antigo para garantir que o 'primeiro' 
+  // encontrado seja o mais atual
+  const sortedCommits = [...commits].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  sortedCommits.forEach(c => {
     const isIgnored = ignoredUrls.includes(c.url);
     
     const minMatch = c.message.match(/^\[(\d+)\]/);
@@ -37,23 +44,32 @@ const parseGitData = (commits, ignoredUrls = [], repoMap = {}) => {
     const gmudMatch = c.message.match(/\[GMUD-(\d+)\]/i);
     const gmudId = gmudMatch ? gmudMatch[1] : null;
 
-    // Limpa o prefixo de minutos [108]
     let cleanMessage = c.message.replace(/^\[\d+\]\s*-?\s*/, '');
-    
     const friendlyRepo = repoMap[c.repo] || c.repo;
 
-    // AJUSTE SOLICITADO: Formatação específica para Evolução e Otimização
+    // Formatação conforme solicitado anteriormente
     if (friendlyRepo.toLowerCase() === 'evolucao-otimizacao-sistemas') {
         const repoNameFixed = "Evolução e Otimização de sistemas";
         if (!cleanMessage.includes(repoNameFixed)) {
             cleanMessage = `${repoNameFixed} - ${cleanMessage}`;
         }
     } else {
-        // Lógica padrão para outros repositórios
         if (!cleanMessage.toLowerCase().includes(friendlyRepo.toLowerCase())) {
             cleanMessage = `${friendlyRepo} – ${cleanMessage}`;
         }
     }
+
+    // LÓGICA DE DESDUPLICAÇÃO:
+    if (!seenMessagesPerDay[c.date]) {
+        seenMessagesPerDay[c.date] = new Set();
+    }
+
+    // Se a mensagem (limpa) já existe para esse dia, ignoramos o commit
+    if (seenMessagesPerDay[c.date].has(cleanMessage)) {
+        return; 
+    }
+    
+    seenMessagesPerDay[c.date].add(cleanMessage);
 
     if (minutes > 0 || gmudId) {
       if (!isIgnored) totalMinutesMonth += minutes;
