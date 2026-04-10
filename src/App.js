@@ -478,7 +478,6 @@ const DashboardContent = ({ user, token, onLogout }) => {
                 <Space><Text style={{ color: '#94a3b8' }}>Carga:</Text><InputNumber min={0} value={targetHours} onChange={setTargetHours} size="small" style={{ width: 50 }} />h <InputNumber min={0} max={59} value={targetMinutes} onChange={setTargetMinutes} size="small" style={{ width: 50 }} />m</Space>
                 <Space><Text style={{ color: '#94a3b8' }}>Valor/h:</Text><InputNumber min={0} value={hourlyRate} onChange={setHourlyRate} size="small" style={{ width: 80 }} /></Space>
                 <Tag color="orange">Meta: <b>{formatToClock(monthlyTargetMinutes)}h</b></Tag>
-                <Tag color="green">Ganhos: <b>{estimatedEarnings}</b></Tag>
               </Space>
             </Card>
           </Col>
