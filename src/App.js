@@ -151,10 +151,29 @@ const DashboardContent = ({ user, token, onLogout }) => {
     return map;
   }, [repos]);
 
-  const data = useMemo(() => 
-    parseGitData(filteredCommits, ignoredCommitUrls, dynamicRepoMap), 
-    [filteredCommits, ignoredCommitUrls, dynamicRepoMap]
-  ); 
+  const data = useMemo(() => {
+    const report = parseGitData(filteredCommits, ignoredCommitUrls, dynamicRepoMap);
+    
+    // Agrupamento por projeto para o novo card
+    const projectMap = {};
+    report.dailyReport.forEach(day => {
+        day.commits.filter(c => !c.isIgnored).forEach(c => {
+            if (!projectMap[c.repo]) projectMap[c.repo] = 0;
+            projectMap[c.repo] += c.min;
+        });
+    });
+
+    // Transforma em array e ordena pelos que tem mais horas
+    report.projectData = Object.keys(projectMap).map(name => ({
+        name,
+        minutes: projectMap[name],
+        hours: parseFloat((projectMap[name] / 60).toFixed(2)),
+        clock: formatToClock(projectMap[name]),
+        percent: Math.min(Math.round((projectMap[name] / (40 * 60)) * 100), 100) // 40h é o teto
+    })).sort((a, b) => b.minutes - a.minutes);
+
+    return report;
+  }, [filteredCommits, ignoredCommitUrls, dynamicRepoMap]);
 
   // --- FUNÇÃO GERAR CSV ---
   const generateCSV = () => {
@@ -487,7 +506,7 @@ const DashboardContent = ({ user, token, onLogout }) => {
 
           <Col xs={24} md={12} lg={6}>
             <Card title={<Text style={{color: '#fff'}}><Clock size={16} style={{marginRight: 8}}/>Progresso no Período</Text>} style={cardStyle}>
-              <div style={{ textAlign: 'center' }}>
+              <div style={{ textAlign: 'center', height: 180 }}>
                 <Progress type="dashboard" percent={progressPercent} strokeColor="#ffa940" width={140} format={() => (
                   <div style={{ color: '#fff' }}><div style={{ fontSize: '22px', fontWeight: 'bold' }}>{formatToClock(data.totalMinutes)}h</div></div>
                 )}/>
@@ -497,7 +516,7 @@ const DashboardContent = ({ user, token, onLogout }) => {
 
           <Col xs={24} md={12} lg={6}>
             <Card title={<Text style={{color: '#fff'}}><Wallet size={16} style={{marginRight: 8}}/>Financeiro</Text>} style={cardStyle}>
-                <div style={{ height: 140, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
+                <div style={{ height: 180, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
                   
                   {/* VALOR REALIZADO (O que já foi feito) */}
                   <Text style={{ color: '#94a3b8', fontSize: '11px' }}>REALIZADO NO PERÍODO</Text>
@@ -519,9 +538,9 @@ const DashboardContent = ({ user, token, onLogout }) => {
             </Card>
           </Col>
 
-          <Col xs={24} lg={12}>
+          <Col xs={24} md={12} lg={6}>
             <Card title={<Text style={{color: '#fff'}}><CalendarIcon size={16} style={{marginRight: 8}}/>Histórico Diário</Text>} style={cardStyle}>
-              <div style={{ height: 140 }}>
+              <div style={{ height: 180 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={data.chartData}>
                     <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{fill: '#94a3b8', fontSize: 10}} />
@@ -539,6 +558,37 @@ const DashboardContent = ({ user, token, onLogout }) => {
                     </Bar>
                   </BarChart>
                 </ResponsiveContainer>
+              </div>
+            </Card>
+          </Col>
+
+          <Col xs={24} md={12} lg={6}>
+            <Card 
+              title={<Text style={{color: '#fff'}}><FolderGit2 size={16} style={{marginRight: 8}}/>Horas por Projeto</Text>} 
+              style={cardStyle}
+              bodyStyle={{ padding: '12px' }}
+            >
+              <div style={{ height: 200, overflowY: 'auto', paddingRight: '8px' }}>
+                {data.projectData.map((proj, idx) => (
+                  <div key={idx} style={{ marginBottom: '12px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <Text ellipsis style={{ color: '#cbd5e1', fontSize: '11px', maxWidth: '70%' }}>{proj.name}</Text>
+                      <Text strong style={{ fontSize: '11px' }}>
+                        {proj.clock}h
+                      </Text>
+                    </div>
+                    <Progress 
+                      percent={proj.percent} 
+                      size="small" 
+                      showInfo={false} 
+                      strokeColor='#3b82f6'
+                      trailColor="#283046"
+                    />
+                  </div>
+                ))}
+                {data.projectData.length === 0 && (
+                  <div style={{ textAlign: 'center', color: '#4b5563', marginTop: '40px' }}>Nenhum dado</div>
+                )}
               </div>
             </Card>
           </Col>
