@@ -22,6 +22,7 @@ const formatToClock = (minutes) => {
   return `${h}:${m.toString().padStart(2, '0')}`;
 };
 
+
 // --- ATUALIZAÇÃO DA FUNÇÃO DE PARSE ---
 const parseGitData = (commits, ignoredUrls = [], repoMap = {}) => {
   const dailyReport = {};
@@ -154,6 +155,42 @@ const DashboardContent = ({ user, token, onLogout }) => {
     parseGitData(filteredCommits, ignoredCommitUrls, dynamicRepoMap), 
     [filteredCommits, ignoredCommitUrls, dynamicRepoMap]
   ); 
+
+  // --- FUNÇÃO GERAR CSV ---
+  const generateCSV = () => {
+    // Cabeçalho do CSV
+    const headers = ['Data', 'Repositorio', 'Descricao', 'Minutos', 'GMUD', 'URL'];
+    
+    // Mapeia os dados para as linhas do CSV
+    const rows = data.dailyReport.flatMap(day => 
+      day.commits
+        .filter(c => !c.isIgnored)
+        .map(c => [
+          day.date,
+          c.repo,
+          `"${c.message.replace(/"/g, '""')}"`, // Escapa aspas
+          c.min,
+          c.gmud || '',
+          c.url
+        ])
+    );
+
+    // Constrói o conteúdo final
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.join(','))
+    ].join('\n');
+
+    // Cria o download do arquivo
+    const blob = new Blob(["\ufeff" + csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.setAttribute("href", url);
+    link.setAttribute("download", `export_gitdash_${dayjs().format('MM_YYYY')}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
 
   // --- FUNÇÃO GERAR PDF ---
   const generatePDF = () => {
@@ -353,9 +390,15 @@ const DashboardContent = ({ user, token, onLogout }) => {
                       style={{ background: '#0b1120', border: '1px solid #283046', color: '#fff' }}
                     />
                   </ConfigProvider>
+                  
                   <Button icon={<FileText size={16} />} onClick={generatePDF} disabled={data.dailyReport.length === 0}>
                     Gerar PDF
                   </Button>
+
+                  <Button icon={<ExternalLink size={16} />} onClick={generateCSV} disabled={data.dailyReport.length === 0}>
+                    Exportar CSV
+                  </Button>
+
                   <Button type="primary" icon={<RefreshCw size={16} />} loading={syncing} onClick={syncCommits}>
                     Sincronizar Agora
                   </Button>
@@ -455,10 +498,21 @@ const DashboardContent = ({ user, token, onLogout }) => {
           <Col xs={24} md={12} lg={6}>
             <Card title={<Text style={{color: '#fff'}}><Wallet size={16} style={{marginRight: 8}}/>Financeiro</Text>} style={cardStyle}>
                 <div style={{ height: 140, display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center' }}>
-                  <Text style={{ color: '#94a3b8', fontSize: '11px' }}>PREVISÃO BRUTA</Text>
-                  <Title level={2} style={{ color: '#52c41a', margin: '4px 0' }}>{estimatedEarnings}</Title>
-                  <Space direction="vertical" align="center" size={0}>
-                    <Tag color="blue" style={{ marginBottom: '4px' }}>{totalDaysWorked} dias ativos</Tag>
+                  
+                  {/* VALOR REALIZADO (O que já foi feito) */}
+                  <Text style={{ color: '#94a3b8', fontSize: '11px' }}>REALIZADO NO PERÍODO</Text>
+                  <Title level={2} style={{ color: '#52c41a', margin: '0 0 4px 0' }}>{estimatedEarnings}</Title>
+                  
+                  {/* VALOR PREVISTO (Meta total baseada nos dias úteis) */}
+                  <Divider style={{ margin: '8px 0', borderBlockStart: '1px solid #283046' }} />
+                  
+                  <Text style={{ color: '#94a3b8', fontSize: '11px' }}>POTENCIAL TOTAL (DIAS ÚTEIS)</Text>
+                  <Text style={{ color: '#ffa940', fontSize: '18px', fontWeight: 'bold' }}>
+                    {((monthlyTargetMinutes / 60) * hourlyRate).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+                  </Text>
+
+                  <Space direction="vertical" align="center" size={0} style={{ marginTop: '8px' }}>
+                    <Tag color="blue" style={{ marginBottom: '4px' }}>{totalDaysWorked} de {daysToWork} dias</Tag>
                     <Text style={{ color: '#4b5563', fontSize: '10px' }}>{filteredCommits.length} commits no filtro</Text>
                   </Space>
                 </div>
@@ -501,27 +555,35 @@ const DashboardContent = ({ user, token, onLogout }) => {
                     <Col span={18}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                         {day.commits.map((c, idx) => (
-                            <div key={idx} style={{ display: 'flex', alignItems: 'center', opacity: c.isIgnored ? 0.4 : 1, transition: 'all 0.2s' }}>
-                              <Checkbox 
-                                checked={!c.isIgnored} 
-                                onChange={() => toggleIgnore(c.url)} 
-                                style={{ marginRight: 12 }}
-                              />
-                              <CheckCircle2 size={14} color={c.isIgnored ? "#64748b" : "#52c41a"} style={{ marginRight: 8, flexShrink: 0 }} />
-                              <Text 
-                                delete={c.isIgnored}
-                                style={{ color: c.isIgnored ? '#64748b' : '#cbd5e1', fontSize: '13px', marginRight: 8, flex: 1 }}
-                              >
-                                {c.message} {c.isIgnored && <Tag size="small" style={{marginLeft: 8, fontSize: '10px'}}>Ignorado</Tag>}
-                              </Text>
-                              <Tooltip title="Ver no GitHub">
-                                <a href={c.url} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center' }}>
-                                  <ExternalLink size={14} color="#94a3b8" />
-                                </a>
-                              </Tooltip>
-                            </div>
-                          )
-                        )}
+                          <div key={idx} style={{ display: 'flex', alignItems: 'center', opacity: c.isIgnored ? 0.4 : 1, transition: 'all 0.2s' }}>
+                            <Checkbox 
+                              checked={!c.isIgnored} 
+                              onChange={() => toggleIgnore(c.url)} 
+                              style={{ marginRight: 12 }}
+                            />
+                            <CheckCircle2 size={14} color={c.isIgnored ? "#64748b" : "#52c41a"} style={{ marginRight: 8, flexShrink: 0 }} />
+                            
+                            <Text 
+                              delete={c.isIgnored}
+                              style={{ color: c.isIgnored ? '#64748b' : '#cbd5e1', fontSize: '13px', marginRight: 8, flex: 1 }}
+                            >
+                              {c.message} {c.isIgnored && <Tag size="small" style={{marginLeft: 8, fontSize: '10px'}}>Ignorado</Tag>}
+                            </Text>
+
+                            {/* --- NOVA TAG DE TEMPO POR TAREFA --- */}
+                            {!c.isIgnored && c.min > 0 && (
+                              <Tag color="blue" style={{ fontSize: '10px', borderRadius: '4px', marginRight: 8 }}>
+                                {formatToClock(c.min)}h
+                              </Tag>
+                            )}
+
+                            <Tooltip title="Ver no GitHub">
+                              <a href={c.url} target="_blank" rel="noreferrer" style={{ display: 'flex', alignItems: 'center' }}>
+                                <ExternalLink size={14} color="#94a3b8" />
+                              </a>
+                            </Tooltip>
+                          </div>
+                        ))}
                       </div>
                     </Col>
                   </Row>
